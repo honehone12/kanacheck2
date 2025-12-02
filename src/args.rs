@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
+#[command(version)]
 pub struct Args {
     #[command(subcommand)]
     pub cmd: Command,
@@ -9,5 +10,8 @@ pub struct Args {
 #[derive(Subcommand)]
 pub enum Command {
     Config,
-    Check {},
+    Check {
+        #[arg(short, long)]
+        path: String,
+    },
 }

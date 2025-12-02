@@ -7,11 +7,14 @@ use tokio::{
     fs::{self, File},
     io::{AsyncBufReadExt, BufReader},
 };
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
 
 static TARGETS: OnceLock<Vec<String>> = OnceLock::new();
 
-pub async fn run_check() -> Result<()> {
+pub async fn run_check(path: &str) -> Result<()> {
+    let path = Path::new(path);
+    debug!("path: {path:?}");
+
     if !fs::try_exists(CONFIG_FILE_NAME).await? {
         bail!("please generate config file with config command");
     }
@@ -22,12 +25,12 @@ pub async fn run_check() -> Result<()> {
         bail!("targets cell is already initialized");
     }
 
-    let meta = fs::metadata(&config.path).await?;
+    let meta = fs::metadata(path).await?;
     if !meta.is_dir() {
-        bail!("{} is not directory, please specify directory", config.path);
+        bail!("{path:?} is not directory, please specify directory");
     }
 
-    let mut dir = fs::read_dir(s).await?;
+    let mut dir = fs::read_dir(path).await?;
     let mut futs = vec![];
 
     while let Some(file) = dir.next_entry().await? {
@@ -64,7 +67,7 @@ pub async fn run_check() -> Result<()> {
 }
 
 async fn check_one(path: impl AsRef<Path>) -> Result<()> {
-    let file = File::open(path).await?;
+    let file = File::open(&path).await?;
     let mut stream = BufReader::new(file).lines();
     let Some(targets) = TARGETS.get() else {
         bail!("targets cell is not initialized");
@@ -73,9 +76,14 @@ async fn check_one(path: impl AsRef<Path>) -> Result<()> {
     let mut l = 0u64;
     while let Some(line) = stream.next_line().await? {
         l += 1;
+
+        if line.is_empty() {
+            continue;
+        }
+
         for t in targets {
             if let Some(idx) = line.find(t) {
-                info!("found '{}' at line:index {l}:{idx}", t);
+                warn!("found '{t}' at　{} {l}:{idx}", path.as_ref().display());
             }
         }
     }
