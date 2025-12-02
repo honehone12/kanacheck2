@@ -51,25 +51,23 @@ fn check_recursive<'r>(
     extensions: &'r Vec<String>,
 ) -> Pin<Box<dyn Future<Output = WalkResult> + 'r>> {
     Box::pin(async move {
+        let mut futs = vec![];
         let mut dir = match fs::read_dir(path).await {
             Ok(dir) => dir,
             Err(e) => {
                 error!("{e}");
-                return Ok(vec![]);
+                return Ok(futs);
             }
         };
-
-        let mut futs = vec![];
 
         while let Some(file) = dir.next_entry().await? {
             let path = file.path();
             let meta = file.metadata().await?;
-            if meta.is_symlink() {
-                continue;
-            } else if meta.is_dir() {
+
+            if meta.is_dir() {
                 let mut rfuts = check_recursive(path, extensions).await?;
                 futs.append(&mut rfuts);
-            } else {
+            } else if meta.is_file() {
                 let Some(ext_raw) = path.extension() else {
                     continue;
                 };
@@ -82,6 +80,8 @@ fn check_recursive<'r>(
 
                 let fut = tokio::spawn(check_one(path));
                 futs.push(fut);
+            } else {
+                continue;
             }
         }
 
