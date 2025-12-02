@@ -2,12 +2,15 @@ use crate::config::{CONFIG_FILE_NAME, Config};
 use anyhow::{Result, bail};
 use futures::future::try_join_all;
 use serde_json::from_str;
-use std::{path::Path, sync::OnceLock};
+use std::{path::Path, pin::Pin, sync::OnceLock};
 use tokio::{
     fs::{self, File},
     io::{AsyncBufReadExt, BufReader},
+    task::JoinHandle,
 };
 use tracing::{debug, error, info, warn};
+
+type WalkResult = Result<Vec<JoinHandle<Result<()>>>>;
 
 static TARGETS: OnceLock<Vec<String>> = OnceLock::new();
 
@@ -30,30 +33,7 @@ pub async fn run_check(path: &str) -> Result<()> {
         bail!("{path:?} is not directory, please specify directory");
     }
 
-    let mut dir = fs::read_dir(path).await?;
-    let mut futs = vec![];
-
-    while let Some(file) = dir.next_entry().await? {
-        let meta = file.metadata().await?;
-        if !meta.is_file() {
-            continue;
-        }
-
-        let path = file.path();
-
-        let Some(ext_raw) = path.extension() else {
-            continue;
-        };
-        let Some(ext) = ext_raw.to_str() else {
-            continue;
-        };
-        if !config.extensions.contains(&ext.to_string()) {
-            continue;
-        }
-
-        let fut = tokio::spawn(check_one(path));
-        futs.push(fut);
-    }
+    let futs = check_recursive(path, &config.extensions).await?;
 
     let result = try_join_all(futs).await?;
     for r in result {
@@ -64,6 +44,42 @@ pub async fn run_check(path: &str) -> Result<()> {
 
     info!("done");
     Ok(())
+}
+
+fn check_recursive<'r>(
+    path: impl AsRef<Path> + 'r,
+    extensions: &'r Vec<String>,
+) -> Pin<Box<dyn Future<Output = WalkResult> + 'r>> {
+    Box::pin(async move {
+        let mut dir = fs::read_dir(path).await?;
+        let mut futs = vec![];
+
+        while let Some(file) = dir.next_entry().await? {
+            let path = file.path();
+            let meta = file.metadata().await?;
+            if meta.is_symlink() {
+                continue;
+            } else if meta.is_dir() {
+                let mut rfuts = check_recursive(path, extensions).await?;
+                futs.append(&mut rfuts);
+            } else {
+                let Some(ext_raw) = path.extension() else {
+                    continue;
+                };
+                let Some(ext) = ext_raw.to_str() else {
+                    continue;
+                };
+                if !extensions.contains(&ext.to_string()) {
+                    continue;
+                }
+
+                let fut = tokio::spawn(check_one(path));
+                futs.push(fut);
+            }
+        }
+
+        Ok(futs)
+    })
 }
 
 async fn check_one(path: impl AsRef<Path>) -> Result<()> {
@@ -83,7 +99,7 @@ async fn check_one(path: impl AsRef<Path>) -> Result<()> {
 
         for t in targets {
             if let Some(idx) = line.find(t) {
-                warn!("found '{t}' at　{} {l}:{idx}", path.as_ref().display());
+                warn!("found '{t}' at {} {l}:{}", path.as_ref().display(), idx + 1);
             }
         }
     }
