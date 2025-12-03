@@ -9,7 +9,7 @@ use crate::args::Args;
 use crate::commands::{check::run_check, config::run_config};
 use anyhow::Result;
 use clap::Parser;
-use tracing::Level;
+use tracing::{Level, error};
 
 async fn run(args: Args) -> Result<()> {
     match args.cmd {
@@ -24,6 +24,10 @@ async fn main() {
     let args = Args::parse();
 
     if let Err(e) = run(args).await {
-        panic!("{e}");
+        if cfg!(debug_assertions) {
+            panic!("{e}");
+        } else {
+            error!("{e}");
+        }
     }
 }
