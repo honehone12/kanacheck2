@@ -8,7 +8,7 @@ use tokio::{
     io::{AsyncBufReadExt, BufReader},
     task::JoinHandle,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 type WalkResult = Result<Vec<JoinHandle<Result<()>>>>;
 
@@ -16,7 +16,6 @@ static TARGETS: OnceLock<Vec<String>> = OnceLock::new();
 
 pub async fn run_check(path: &str) -> Result<()> {
     let path = Path::new(path);
-    debug!("path: {path:?}");
 
     if !fs::try_exists(CONFIG_FILE_NAME).await? {
         bail!("please generate config file with config command");
@@ -55,7 +54,9 @@ fn check_recursive<'r>(
         let mut dir = match fs::read_dir(path).await {
             Ok(dir) => dir,
             Err(e) => {
+                // this is generally a permission error
                 error!("{e}");
+                // return empty list instead of error
                 return Ok(futs);
             }
         };
